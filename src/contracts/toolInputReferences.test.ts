@@ -8,6 +8,24 @@ import { toolContract } from "./toolContracts.js";
 import { toolInputSchemaWithMetadata } from "./toolSchemaMetadata.js";
 
 describe("advertised input references", () => {
+  it("reuses advertised contracts across sessions without confusing distinct examples", () => {
+    const contract = toolContract("open_binary");
+    const first = toolInputSchemaWithMetadata(contract);
+    const second = toolInputSchemaWithMetadata(contract);
+    expect(second).toBe(first);
+    expect(
+      second["~standard"].jsonSchema.input({ target: "draft-2020-12" }),
+    ).toBe(first["~standard"].jsonSchema.input({ target: "draft-2020-12" }));
+    const other = toolInputSchemaWithMetadata({ ...contract, examples: [] });
+    expect(other).not.toBe(first);
+    expect(
+      other["~standard"].jsonSchema.input({ target: "draft-2020-12" }),
+    ).not.toHaveProperty("examples");
+    expect(
+      first["~standard"].jsonSchema.input({ target: "draft-2020-12" }),
+    ).toHaveProperty("examples");
+  });
+
   it.each(["draft-2020-12", "draft-07"] as const)(
     "preserves production native-selector constraints in %s",
     (target) => {

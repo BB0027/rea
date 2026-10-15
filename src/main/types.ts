@@ -2,6 +2,7 @@ import type { OptionalProviderLoadResult } from "../application/OptionalObservat
 
 export interface RuntimeDependencies {
   readonly env: NodeJS.ProcessEnv;
+  readonly cwd?: string;
   readonly serve: typeof import("@modelcontextprotocol/server/stdio").serveStdio;
   readonly writeStderr: (text: string) => void;
   readonly setExitCode: (code: number) => void;

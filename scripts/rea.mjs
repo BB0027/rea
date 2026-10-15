@@ -14,6 +14,9 @@ process.env.REA_PACKAGE_VERSION = packageJson.version;
 const isMcpMode =
   args.length === 1 && (args[0] === "--mcp" || args[0] === "mcp");
 const isMcpDoctorMode = args[0] === "mcp" && args[1] === "doctor";
+const isSharedMcpServer = args[0] === "mcp" && args[1] === "serve";
+const sharedMcpEndpoint = process.env.REA_MCP_SHARED_ENDPOINT;
+const isSharedMcpClient = isMcpMode && sharedMcpEndpoint !== undefined;
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Playwright's registry assumes one of its three desktop host platforms when
@@ -30,17 +33,33 @@ if (
   process.env.PLAYWRIGHT_BROWSERS_PATH = join(cacheRoot, "ms-playwright");
 }
 
-const runtimeFiles = isMcpMode
-  ? ["dist/main.js"]
-  : isMcpDoctorMode
-    ? ["dist/main.js", "dist/mcpDoctor.js"]
-    : ["dist/cli.js", "dist/cliOutput.js", "dist/cli/streamedJsonOutput.js"];
+const runtimeFiles = isSharedMcpServer
+  ? ["dist/main/sharedMcpEntrypoint.js"]
+  : isSharedMcpClient
+    ? ["dist/main/sharedMcpClient.js"]
+    : isMcpMode
+      ? ["dist/main.js"]
+      : isMcpDoctorMode
+        ? ["dist/main.js", "dist/mcpDoctor.js"]
+        : [
+            "dist/cli.js",
+            "dist/cliOutput.js",
+            "dist/cli/streamedJsonOutput.js",
+          ];
 
 if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.stderr.write(
     `REA's compiled runtime is missing. Run \`npm ci && npm run build:cached\` in ${packageRoot} to install dependencies and build REA, then restart it. If this is an installed package, reinstall rea-agents.\n`,
   );
   process.exitCode = 1;
+} else if (isSharedMcpServer) {
+  const { runSharedMcpServer } =
+    await import("../dist/main/sharedMcpEntrypoint.js");
+  await runSharedMcpServer(args.slice(2));
+} else if (isSharedMcpClient) {
+  const { runSharedMcpClient } =
+    await import("../dist/main/sharedMcpClient.js");
+  await runSharedMcpClient(sharedMcpEndpoint);
 } else if (isMcpMode) {
   const { runEntrypoint } = await import("../dist/main.js");
   await runEntrypoint();

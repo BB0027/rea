@@ -1,7 +1,8 @@
 import type { ServeStdioOptions } from "@modelcontextprotocol/server/stdio";
 import { describe, expect, it } from "vitest";
 
-import { run, runEntrypoint } from "../../../src/main.js";
+import { openMcpRuntime, run, runEntrypoint } from "../../../src/main.js";
+import { createServer } from "../../../src/server/createServer.js";
 
 type RuntimeDependencies = NonNullable<Parameters<typeof run>[0]>;
 
@@ -35,6 +36,41 @@ const dependencies = ({
 });
 
 describe("MCP runtime errors", () => {
+  it("retains server resources for retry when transport teardown suppresses a provider cleanup failure", async () => {
+    let cleanupAllowed = false;
+    let closeCalls = 0;
+    const runtime = await openMcpRuntime({
+      ...dependencies({
+        serve: (factory) => {
+          void factory({ era: "legacy" });
+          // The SDK reports provider errors through onerror but resolves close.
+          return { close: async () => undefined };
+        },
+        output: [],
+        shutdown: [],
+        exitCodes: [],
+      }),
+      createServer: (source, options) => {
+        const server = createServer(source, options);
+        const close = server.close.bind(server);
+        server.close = async () => {
+          closeCalls += 1;
+          if (!cleanupAllowed) throw new Error("provider cleanup denied");
+          await close();
+        };
+        return server;
+      },
+    });
+    if (!runtime.ok) throw new Error("Runtime did not start");
+    try {
+      await expect(runtime.close()).rejects.toThrow("provider cleanup denied");
+    } finally {
+      cleanupAllowed = true;
+      await runtime.close();
+    }
+    expect(closeCalls).toBe(2);
+  });
+
   it("reports connection loss without the transport cause", async () => {
     const output: string[] = [];
     const shutdown: Array<() => void> = [];

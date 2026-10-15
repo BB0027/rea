@@ -52,11 +52,18 @@ const PROPERTY_DESCRIPTIONS: Readonly<Record<string, string>> = {
 
 type JsonSchemaProjection = z.ZodType["~standard"]["jsonSchema"]["input"];
 
+// Contracts are immutable. Retain one read-only wire projection per identity,
+// without retaining transient contracts or any session handlers/evidence.
+const advertisedInputs = new WeakMap<ToolContract, z.ZodType>();
+const advertisedOutputs = new WeakMap<z.ZodType, z.ZodType>();
+
 /** Attach caller guidance to a canonical schema for the SDK wire projection. */
 export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
-): Contract["inputSchema"] =>
-  withAdvertisedJsonSchema(
+): Contract["inputSchema"] => {
+  const cached = advertisedInputs.get(contract);
+  if (cached !== undefined) return cached as Contract["inputSchema"];
+  const schema = withAdvertisedJsonSchema(
     contract.inputSchema,
     "input",
     (project) => (options) => {
@@ -71,12 +78,17 @@ export const toolInputSchemaWithMetadata = <Contract extends ToolContract>(
       };
     },
   );
+  advertisedInputs.set(contract, schema);
+  return schema;
+};
 
 /** Share output definitions and content-bound validator identities on the wire. */
 export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
   contract: Contract,
-): Contract["outputSchema"] =>
-  withAdvertisedJsonSchema(
+): Contract["outputSchema"] => {
+  const cached = advertisedOutputs.get(contract.outputSchema);
+  if (cached !== undefined) return cached as Contract["outputSchema"];
+  const schema = withAdvertisedJsonSchema(
     contract.outputSchema,
     "output",
     (project) => (options) => {
@@ -96,6 +108,9 @@ export const toolOutputSchemaWithMetadata = <Contract extends ToolContract>(
       };
     },
   );
+  advertisedOutputs.set(contract.outputSchema, schema);
+  return schema;
+};
 
 /**
  * Apply a wire-presentation transform to one schema's advertised input

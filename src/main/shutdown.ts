@@ -16,6 +16,7 @@ interface ShutdownCleanupOwner {
 export const createShutdown = (input: {
   readonly handle: StdioServerHandle;
   readonly closeAndroid?: () => Promise<void>;
+  readonly closeServers?: () => Promise<void>;
   readonly session: BinarySession;
   readonly dependencies: RuntimeDependencies;
   readonly serverLogger: Logger;
@@ -30,6 +31,9 @@ export const createShutdown = (input: {
     ...(input.closeAndroid === undefined
       ? []
       : [{ close: input.closeAndroid, closed: false }]),
+    ...(input.closeServers === undefined
+      ? []
+      : [{ close: input.closeServers, closed: false }]),
     {
       close: async () => {
         const closed = await session.close({ retainProviderDocuments: true });

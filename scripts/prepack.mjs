@@ -37,6 +37,8 @@ const run = (command, args) => {
   }
 };
 
+run(process.execPath, ["scripts/verify-mcp-bridge.mjs", "--if-present"]);
+
 if (await pathExists(join(root, "src"))) {
   const packageManagerPath = process.env.npm_execpath;
   if (packageManagerPath === undefined)

@@ -101,6 +101,7 @@ const ACTIVE_TARGET_INSTRUCTIONS =
   "REA analyzes the active reverse-engineering target. Use the analysis tool that answers the question directly. Search or list symbols when discovery is needed; analyze_function provides a function dossier, and focused procedure tools return individual facets.";
 
 export interface CreateServerOptions {
+  readonly cwd?: string;
   readonly environment?: Readonly<NodeJS.ProcessEnv>;
   readonly delivery?: ToolResultDelivery;
   readonly evmInterface?: EvmInterfaceService;
@@ -328,6 +329,7 @@ export const createServer = (
   if (session !== undefined) {
     registerSessionTools(server, session, toolLogger, {
       ...selectedOptions,
+      environment,
       ...(availability === undefined
         ? {}
         : { availabilityPolicy: availability.policy }),

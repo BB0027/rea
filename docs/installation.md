@@ -61,6 +61,103 @@ curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh |
 
 Supported options are `--version <semver>`, `--dry-run`, `--no-setup`, `--no-prompt`, and `--verbose`. Neither `--no-prompt` nor a non-interactive shell grants permission to install external dependencies.
 
+## Optional shared MCP backend
+
+Several local agents can share REA's loaded analysis modules while keeping a
+separate target, Evidence store, provider configuration, and request stream for
+each connection. This mode is opt-in; ordinary `rea mcp` still owns its process.
+It saves repeated module/runtime memory. It does not merge analysis targets or
+share live Ghidra, IDA, Hopper, or browser resources between sessions.
+
+From a built checkout, start the backend in a terminal:
+
+```powershell
+node scripts/rea.mjs mcp serve --idle-timeout-ms 0
+```
+
+For an installed build containing this feature, use `rea mcp serve` instead.
+The backend prints one JSON line with `endpointFile` and `pid`. For every MCP
+client, keep the command `node`, arguments pointing to this checkout's absolute
+`scripts/rea.mjs` path followed by `mcp`, and set the client's
+`REA_MCP_SHARED_ENDPOINT` environment variable to that **absolute endpoint-file
+path**. For example, merge these fields into the client's MCP server entry:
+
+```json
+{
+  "command": "node",
+  "args": ["E:/Workspace/rea/shared-mcp/scripts/rea.mjs", "mcp"],
+  "env": {
+    "REA_MCP_SHARED_ENDPOINT": "C:/Users/you/AppData/Local/Temp/rea-shared-mcp-INSTANCE/endpoint.json"
+  }
+}
+```
+
+On Windows x64, a native bridge avoids starting a Node/V8 process for each
+client. Build it once in this checkout with an existing Visual Studio C++ Build
+Tools installation (the build does not install a toolchain):
+
+```powershell
+npm run build:mcp-bridge
+npm run verify:mcp-bridge
+```
+
+Use the executable **directly** as the MCP command, with no Node launcher:
+
+```json
+{
+  "command": "E:/Workspace/rea/shared-mcp/native/mcp-bridge/build/rea-mcp-bridge-win32-x64.exe",
+  "args": [],
+  "env": {
+    "REA_MCP_SHARED_ENDPOINT": "C:/Users/you/AppData/Local/Temp/rea-shared-mcp-INSTANCE/endpoint.json"
+  }
+}
+```
+
+The executable uses Windows sockets and pipes with bounded buffers; it preserves
+the connecting client's environment and working directory, and exits when the
+client closes stdin or the backend disconnects. It needs no Node or Visual C++
+redistributable at runtime. The backend still runs in Node. Other platforms can
+use the Node bridge above. Native bridge coverage is opt-in after building:
+
+```powershell
+$env:REA_TEST_NATIVE_MCP_BRIDGE = "1"
+npm run test:focused -- tests/acceptance/sharedMcp.test.ts tests/acceptance/sharedMcpNative.test.ts
+```
+
+The generated executable and SHA-256/version manifest live in the ignored
+`native/mcp-bridge/build/` directory. A package includes them when built;
+`prepack` verifies an existing artifact and refuses stale or mismatched bytes.
+A missing native build leaves Node bridge support available. The native bridge
+reads the version-1 descriptor emitted by this backend; do not edit or reorder
+its fields. Read-only tool schema projections are shared across connections;
+handlers, target state, Evidence and provider resources remain session-owned.
+
+Replace the example paths with this backend's actual paths. Use the same REA build for
+the backend and bridges. Existing provider environment settings belong on each
+client entry. The bridge sends that environment in memory; the backend does not
+persist it or replace its process-wide environment. MCP target and snapshot
+paths remain absolute. Process capture inherits the connecting client's
+environment and working directory. Use absolute paths for provider launchers
+and provider installations; set `JAVA_HOME` explicitly for Windows jadx rather
+than depending on Java discovery in the current directory.
+
+The listener binds only to `127.0.0.1` on a random port. A random token lives in
+the endpoint file under a private runtime directory (POSIX mode 0700 or the
+verified Windows native DACL boundary). Do not publish that file's contents or
+send it to another user. Missing Windows native privacy support fails startup.
+Each connection authenticates before the analysis runtime is loaded; opening
+frames are limited to 1 MiB and must arrive within five seconds. Bridges time
+out startup after 30 seconds. `--max-clients` defaults to 32 and also counts
+pending authentication and sessions awaiting cleanup.
+
+Disconnecting a client closes its session resources. By default, the backend
+exits after 60 seconds with no clients and removes the endpoint file;
+`--idle-timeout-ms 0` keeps it available until stopped with Ctrl+C. A backend
+restart creates a new endpoint path and token: update client entries and
+reconnect them. There is no automatic restart or session replay. Backend
+failure disconnects all attached clients, so export important Evidence before
+stopping it. Remove `REA_MCP_SHARED_ENDPOINT` to return to ordinary stdio mode.
+
 ## Released package and main
 
 Repository main documents its current code and generated catalog. `@latest`

@@ -1,4 +1,5 @@
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { resolve } from "node:path";
 
 import {
   getNavigationContext,
@@ -75,6 +76,8 @@ const recordProcessResidualUnknowns = (
 };
 
 interface ProcessToolRegistration {
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly cwd?: string;
   readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
   readonly logger: Logger;
@@ -90,6 +93,8 @@ const registerProcessTools = ({
   logger,
   captureContract,
   resourceScope,
+  environment,
+  cwd,
 }: ProcessToolRegistration): void => {
   const admission = withAdmittedAnalysis({ kind: "session", session });
   server.registerTool(
@@ -108,10 +113,15 @@ const registerProcessTools = ({
             captureContract.name,
             () =>
               captureProcessScenario(
-                input,
+                cwd === undefined
+                  ? input
+                  : {
+                      ...input,
+                      working_directory: resolve(cwd, input.working_directory),
+                    },
                 context.mcpReq.signal,
                 process.platform,
-                process.env,
+                environment,
                 undefined,
                 undefined,
                 progress,
@@ -227,6 +237,8 @@ const registerOpenLifecycleTool = ({
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */
 export interface SessionToolOptions {
+  readonly environment?: Readonly<NodeJS.ProcessEnv>;
+  readonly cwd?: string;
   readonly startedAt?: string;
   readonly availabilityPolicy?: () => AvailabilityPolicy;
   readonly androidAnalysisAvailability?: (
@@ -345,6 +357,8 @@ export const registerSessionTools = (
     logger,
     captureContract,
     resourceScope: processResources,
+    environment: options.environment ?? process.env,
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
   });
   const closeServer = server.close.bind(server);
   server.close = async () => {

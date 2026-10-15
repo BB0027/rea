@@ -47,6 +47,28 @@ const hasAdvertisedInputJsonSchema = (value: unknown): boolean => {
   );
 };
 
+const compactSchemas = new WeakMap<object, Map<number, unknown>>();
+
+const sharedCompactSchema = <Schema>(
+  schema: Schema,
+  budget: number,
+): Schema => {
+  const key = schema as object;
+  let byBudget = compactSchemas.get(key);
+  if (byBudget === undefined) {
+    byBudget = new Map();
+    compactSchemas.set(key, byBudget);
+  }
+  const cached = byBudget.get(budget);
+  if (cached !== undefined) return cached as Schema;
+  const compact = transformAdvertisedInputJsonSchema(
+    schema,
+    (projected) => compactAdvertisedInputSchema(projected, budget).schema,
+  );
+  byBudget.set(budget, compact);
+  return compact;
+};
+
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
 export class EvidenceMcpServer extends McpServer {
   constructor(
@@ -93,13 +115,7 @@ export class EvidenceMcpServer extends McpServer {
       budget !== undefined &&
       config !== undefined &&
       hasAdvertisedInputJsonSchema(config.inputSchema)
-        ? transformAdvertisedInputJsonSchema(
-            config.inputSchema as Parameters<
-              typeof transformAdvertisedInputJsonSchema
-            >[0],
-            (projected) =>
-              compactAdvertisedInputSchema(projected, budget).schema,
-          )
+        ? sharedCompactSchema(config.inputSchema, budget)
         : undefined;
     return super.registerTool(
       name,

@@ -47,14 +47,21 @@ const runtimeDependencies = (): RuntimeDependencies => ({
  * The adapter owns its BinarySession for the process lifetime; EOF and process
  * signals close bridge resources without assuming ownership of the Hopper app.
  */
-export const run = async (
+export const openMcpRuntime = async (
   dependencies: RuntimeDependencies = runtimeDependencies(),
-): Promise<number> => {
+): Promise<
+  | { readonly ok: true; readonly close: () => Promise<void> }
+  | {
+      readonly ok: false;
+      readonly exitCode: number;
+      readonly close?: () => Promise<void>;
+    }
+> => {
   const environment = snapshotEnvironment(dependencies.env);
   const config = parseConfig(environment);
   if (!config.ok) {
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
-    return 1;
+    return { ok: false, exitCode: 1 };
   }
   const logger = createLogger("mcp", config.value.logLevel);
   const serverLogger = logger.child({ layer: "server" });
@@ -65,7 +72,15 @@ export const run = async (
     serverLogger,
     dependencies.writeStderr,
   );
-  if (!opened.ok) return opened.exitCode;
+  if (!opened.ok)
+    return {
+      ok: false,
+      exitCode: opened.exitCode,
+      close: async () => {
+        const closed = await session.close({ retainProviderDocuments: true });
+        if (!closed.ok) throw closed.error;
+      },
+    };
   const transport = await startMcpTransport(dependencies, session, {
     logger,
     serverLogger,
@@ -78,15 +93,27 @@ export const run = async (
           createOptionalObservationFactories(environment),
         )),
   });
-  if (!transport.ok) return 1;
-  createShutdown({
-    handle: transport.handle,
+  const cleanup = createShutdown({
+    handle: transport.ok ? transport.handle : { close: async () => undefined },
     closeAndroid: transport.closeAndroid,
+    closeServers: transport.closeServers,
     session,
-    dependencies,
+    dependencies: transport.ok
+      ? dependencies
+      : { ...dependencies, registerShutdown: () => () => undefined },
     serverLogger,
   });
-  return 0;
+  return transport.ok
+    ? { ok: true, close: cleanup.shutdown }
+    : { ok: false, exitCode: 1, close: cleanup.shutdown };
+};
+
+/** Serve the ordinary process-owned stdio connection. */
+export const run = async (
+  dependencies: RuntimeDependencies = runtimeDependencies(),
+): Promise<number> => {
+  const runtime = await openMcpRuntime(dependencies);
+  return runtime.ok ? 0 : runtime.exitCode;
 };
 
 /** Run the executable boundary without exposing an unexpected startup cause. */

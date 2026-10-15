@@ -31,8 +31,13 @@ export const startMcpTransport = async (
       readonly ok: true;
       readonly handle: StdioServerHandle;
       readonly closeAndroid: () => Promise<void>;
+      readonly closeServers: () => Promise<void>;
     }
-  | { readonly ok: false }
+  | {
+      readonly ok: false;
+      readonly closeAndroid: () => Promise<void>;
+      readonly closeServers: () => Promise<void>;
+    }
 > => {
   const { serverLogger } = serverContext;
   let optionalProviders: OptionalProviderLoadResult = {};
@@ -55,6 +60,18 @@ export const startMcpTransport = async (
     );
   }
   const androidProviders: AndroidAnalysisPort[] = [];
+  const servers = new Set<ReturnType<typeof createServer>>();
+  const closeServers = async (): Promise<void> => {
+    const results = await Promise.allSettled(
+      [...servers].map((server) => server.close()),
+    );
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+      throw new AggregateError(failures, "MCP server cleanup failed");
+  };
   const closeAndroid = async (): Promise<void> => {
     const results = await Promise.allSettled(
       androidProviders.map((provider) => provider.close()),
@@ -71,16 +88,26 @@ export const startMcpTransport = async (
           serverContext.environment,
         );
         androidProviders.push(android);
-        return (dependencies.createServer ?? createServer)(
+        const server = (dependencies.createServer ?? createServer)(
           { kind: "session", session },
           {
             logger: serverContext.logger,
             environment: serverContext.environment,
+            ...(dependencies.cwd === undefined
+              ? {}
+              : { cwd: dependencies.cwd }),
             delivery: serverContext.delivery,
             ...optionalProviders,
             androidAnalysis: android,
           },
         );
+        servers.add(server);
+        const close = server.close.bind(server);
+        server.close = async () => {
+          await close();
+          servers.delete(server);
+        };
+        return server;
       },
       {
         onerror: () => {
@@ -90,10 +117,12 @@ export const startMcpTransport = async (
       },
     );
   } catch (cause: unknown) {
-    const [binaryCleanup, androidCleanup] = await Promise.allSettled([
-      session.close(),
-      closeAndroid(),
-    ]);
+    const [binaryCleanup, androidCleanup, serverCleanup] =
+      await Promise.allSettled([
+        session.close(),
+        closeAndroid(),
+        closeServers(),
+      ]);
     serverLogger.error(
       {
         error: cause instanceof Error ? cause.message : String(cause),
@@ -109,7 +138,7 @@ export const startMcpTransport = async (
       );
       dependencies.writeStderr(`${cleanupError.message}\n`);
     }
-    for (const cleanup of [binaryCleanup, androidCleanup]) {
+    for (const cleanup of [binaryCleanup, androidCleanup, serverCleanup]) {
       if (cleanup.status === "rejected") {
         const reason =
           cleanup.reason instanceof Error
@@ -122,7 +151,7 @@ export const startMcpTransport = async (
         dependencies.writeStderr(`Provider cleanup failed: ${reason}\n`);
       }
     }
-    return { ok: false };
+    return { ok: false, closeAndroid, closeServers };
   }
-  return { ok: true, handle, closeAndroid };
+  return { ok: true, handle, closeAndroid, closeServers };
 };
